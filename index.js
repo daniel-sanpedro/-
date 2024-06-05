@@ -20,7 +20,24 @@ async function init() {
     console.log("Attempting to connect to the database...");
     await client.connect();
     console.log("Connected to the database successfully");
-    // Perform your operations here
+
+    SQL = `
+            CREATE TABLE IF NOT EXISTS yourTable (
+                id SERIAL PRIMARY KEY,
+                column1 VARCHAR(50),
+                column2 INT
+            );
+        `;
+    await client.query(SQL);
+    console.log("Tables created");
+
+    SQL = `
+            INSERT INTO yourTable (column1, column2) VALUES 
+            ('data1', 100),
+            ('data2', 200);
+        `;
+    await client.query(SQL);
+    console.log("Data seeded");
   } catch (err) {
     console.error("Connection error", err.stack);
   } finally {
@@ -29,5 +46,4 @@ async function init() {
   }
 }
 
-// Call the init function to establish connection
 init();
