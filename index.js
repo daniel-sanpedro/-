@@ -1,102 +1,139 @@
-const pg = require("pg");
-const client = new pg.Client(
-  process.env.DATABASE_URL || "postgres://localhost/acme_notes_db"
-);
 const express = require("express");
+const morgan = require("morgan");
+const pg = require("pg");
 const app = express();
 
-// parse the body into JS Objects
+const client = new pg.Client(
+  process.env.DATABASE_URL || "postgres://localhost/the_acme_flavors_db"
+);
+
+const PORT = process.env.PORT || 3000;
+
+app.use(morgan("dev"));
 app.use(express.json());
 
-// Log the requests as they come in
-app.use(require("morgan")("dev"));
+app.use((req, res, next) => {
+  console.log(`Received ${req.method} request for ${req.url}`);
+  next();
+});
 
-// Create Notes - C
-app.post("/api/notes", async (req, res, next) => {
+app.post("/api/flavors", async (req, res, next) => {
   try {
-    const SQL = `
-      INSERT INTO notes(txt)
-      VALUES($1)
-      RETURNING *
-    `;
-    const response = await client.query(SQL, [req.body.txt]);
-    res.send(response.rows[0]);
-  } catch (ex) {
-    next(ex);
+    console.log("Request body:", req.body); // Log the incoming request body
+    const { name, is_favorite = false } = req.body;
+
+    // Validate the request body
+    if (!name) {
+      return res.status(400).send({ error: "Name is required" });
+    }
+
+    console.log("Name:", name, "Is Favorite:", is_favorite); // Log extracted variables
+    const SQL =
+      "INSERT INTO flavors(name, is_favorite) VALUES($1, $2) RETURNING *;";
+    const response = await client.query(SQL, [name, is_favorite]);
+    console.log("Database response:", response.rows); // Log the database response
+    res.status(201).send(response.rows[0]);
+  } catch (error) {
+    console.error("Error occurred while creating flavor:", error);
+    next(error);
   }
 });
 
-// Read Notes - R
-app.get("/api/notes", async (req, res, next) => {
+app.get("/api/flavors", async (req, res, next) => {
   try {
-    const SQL = `
-      SELECT * from notes ORDER BY created_at DESC;
-    `;
+    const SQL = "SELECT * FROM flavors;";
     const response = await client.query(SQL);
     res.send(response.rows);
-  } catch (ex) {
-    next(ex);
+  } catch (error) {
+    next(error);
   }
 });
 
-// Update Notes - U
-app.put("/api/notes/:id", async (req, res, next) => {
+app.get("/api/flavors/:id", async (req, res, next) => {
   try {
-    const SQL = `
-      UPDATE notes
-      SET txt=$1, ranking=$2, updated_at= now()
-      WHERE id=$3 RETURNING *
-    `;
-    const response = await client.query(SQL, [
-      req.body.txt,
-      req.body.ranking,
-      req.params.id,
-    ]);
+    const SQL = "SELECT * FROM flavors WHERE id = $1;";
+    const response = await client.query(SQL, [Number(req.params.id)]);
+    if (response.rows.length === 0) {
+      return res.status(404).send({ error: "Flavor not found" });
+    }
     res.send(response.rows[0]);
-  } catch (ex) {
-    next(ex);
+  } catch (error) {
+    next(error);
   }
 });
 
-// Delete Notes - D
-app.delete("/api/notes/:id", async (req, res, next) => {
+app.put("/api/flavors/:id", async (req, res, next) => {
   try {
-    const SQL = `
-      DELETE from notes
-      WHERE id = $1
-    `;
-    const response = await client.query(SQL, [req.params.id]);
-    res.sendStatus(204);
-  } catch (ex) {
-    next(ex);
+    const { name, is_favorite } = req.body;
+    let SQL, params;
+
+    if (name !== undefined && is_favorite !== undefined) {
+      SQL =
+        "UPDATE flavors SET name = $1, is_favorite = $2, updated_at = now() WHERE id = $3 RETURNING *;";
+      params = [name, is_favorite, req.params.id];
+    } else if (name !== undefined) {
+      SQL =
+        "UPDATE flavors SET name = $1, updated_at = now() WHERE id = $2 RETURNING *;";
+      params = [name, req.params.id];
+    } else if (is_favorite !== undefined) {
+      SQL =
+        "UPDATE flavors SET is_favorite = $1, updated_at = now() WHERE id = $2 RETURNING *;";
+      params = [is_favorite, req.params.id];
+    } else {
+      return res.status(400).send({ error: "No valid fields to update" });
+    }
+
+    const response = await client.query(SQL, params);
+    if (response.rows.length === 0) {
+      return res.status(404).send({ error: "Flavor not found" });
+    }
+    res.send(response.rows[0]);
+  } catch (error) {
+    next(error);
   }
 });
 
-// create and run the express app
+app.delete("/api/flavors/:id", async (req, res, next) => {
+  try {
+    const SQL = "DELETE FROM flavors WHERE id = $1 RETURNING *;";
+    const response = await client.query(SQL, [Number(req.params.id)]);
+    if (response.rows.length === 0) {
+      return res.status(404).send({ error: "Flavor not found" });
+    }
+    res.sendStatus(204);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send({ error: "An unexpected error occurred!" });
+});
 
 const init = async () => {
-  await client.connect();
-  let SQL = `
-    DROP TABLE IF EXISTS notes;
-    CREATE TABLE notes(
-      id SERIAL PRIMARY KEY,
-      created_at TIMESTAMP DEFAULT now(),
-      updated_at TIMESTAMP DEFAULT now(),
-      ranking INTEGER DEFAULT 3 NOT NULL,
-      txt VARCHAR(255) NOT NULL
-    );
-  `;
-  await client.query(SQL);
-  console.log("tables created");
-  SQL = `
-    INSERT INTO notes(txt, ranking) VALUES('learn express', 5);
-    INSERT INTO notes(txt, ranking) VALUES('write SQL queries', 4);
-    INSERT INTO notes(txt, ranking) VALUES('create routes', 2);
-  `;
-  await client.query(SQL);
-  console.log("data seeded");
-  const port = process.env.PORT || 3000;
-  app.listen(port, () => console.log(`listening on port ${port}`));
+  try {
+    await client.connect();
+
+    let SQL = "DROP TABLE IF EXISTS flavors;";
+    SQL += "CREATE TABLE flavors(id SERIAL PRIMARY KEY,";
+    SQL += "                     name VARCHAR(100) NOT NULL,";
+    SQL += "                     is_favorite BOOLEAN DEFAULT FALSE,";
+    SQL += "                     created_at TIMESTAMP DEFAULT now(),";
+    SQL += "                     updated_at TIMESTAMP DEFAULT now());";
+
+    SQL += "INSERT INTO flavors(name) VALUES('Chocolate');";
+    SQL += "INSERT INTO flavors(name) VALUES('Cookies and Cream');";
+    SQL += "INSERT INTO flavors(name) VALUES('Butter pecan');";
+
+    await client.query(SQL);
+
+    app.listen(PORT, () => {
+      console.log(`Server started and listening on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Error connecting to the database:", error);
+  }
 };
 
 init();
